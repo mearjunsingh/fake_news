@@ -1,15 +1,29 @@
+import re
+import string
+import joblib
+
+from pathlib import Path
+
 from django.db import models
+from django.core.exceptions import ValidationError
 from django.urls import reverse
 from datetime import datetime
 
-from django.utils.text import slugify
-
 from .utils import generate_unique_slug
 
-# from cloudinary.models import CloudinaryField
+
+def wordppt(text):
+    text = text.lower()
+    text = re.sub("\[.*?\]", "", text)
+    text = re.sub("\\W", " ", text)
+    text = re.sub("https?://\S+|www\.\S+", "", text)
+    text = re.sub("<.*?>+", "", text)
+    text = re.sub("[%s]" % re.escape(string.punctuation), "", text)
+    text = re.sub("\n", "", text)
+    text = re.sub("\w*\d\w*", "", text)
+    return text
 
 
-# You can create your models here.
 class Category(models.Model):
     name = models.CharField(max_length=55)
 
@@ -37,11 +51,24 @@ class Blog(models.Model):
     def __str__(self):
         return self.title
 
+    def clean(self):
+        BASE_DIR = Path(__file__).resolve().parent.parent
+
+        LR = joblib.load(BASE_DIR / "backend/algorithm/lr.joblib")
+        vectorization = joblib.load(BASE_DIR / "backend/algorithm/vectorization.joblib")
+
+        text_cleaned = wordppt(self.content)
+        new_x_test = [text_cleaned]
+        new_xv_test = vectorization.transform(new_x_test)
+
+        pred_LR = LR.predict(new_xv_test)
+
+        if pred_LR[0] == 0:
+            raise ValidationError("Fake news found")
+
     def save(self, *args, **kwargs):
         self.slug = generate_unique_slug(Blog, self.title)
         super().save(*args, **kwargs)
 
     def get_absolute_url(self):
-        return reverse(
-            "blog:article", kwargs={"category": self.category, "slug": self.slug}
-        )
+        return reverse("blog:article", kwargs={"category": self.category, "slug": self.slug})
